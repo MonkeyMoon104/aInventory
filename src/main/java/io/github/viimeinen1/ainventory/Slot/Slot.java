@@ -35,7 +35,7 @@ public class Slot {
      * @param slot slot to write to
      * @param value context value of what to write from
      */
-    public void write(Inventory inventory, int slot, int value) {
+    public void write(Inventory inventory, int value, int slot) {
         var subSlot = slotMap.get(value);
         if (subSlot == null) inventory.clear(slot);
         else subSlot.write(inventory, slot);

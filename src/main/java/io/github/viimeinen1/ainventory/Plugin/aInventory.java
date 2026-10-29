@@ -5,12 +5,18 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 public class aInventory extends JavaPlugin {
 
+    /**
+     * On enable
+     */
     @Override
     public void onEnable() {
         super.onEnable();
         InventoryListener.registerListener();
     }
 
+    /**
+     * On disable
+     */
     @Override
     public void onDisable() {
         super.onDisable();

@@ -3,6 +3,7 @@ package io.github.viimeinen1.ainventory.View;
 import io.github.viimeinen1.ainventory.Animation.Animation;
 import io.github.viimeinen1.ainventory.Interfaces.*;
 import io.github.viimeinen1.ainventory.Inventory.AbstractInventory;
+import io.github.viimeinen1.ainventory.Inventory.SharedInventory;
 import io.github.viimeinen1.ainventory.Listeners.InventoryListener;
 import io.github.viimeinen1.ainventory.Slot.Slot;
 import io.papermc.paper.datacomponent.DataComponentTypes;
@@ -22,12 +23,55 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.IntStream;
 
 /**
  * Custom view of an inventory
  */
 public class View implements InventoryHolder {
+
+    /**
+     * Stores all player views to handle deletion.
+     */
+    @ApiStatus.Internal
+    public static class Storage {
+        private static final ConcurrentHashMap<UUID, Set<View>> playerViews = new ConcurrentHashMap<>();
+
+        /**
+         * Add view to global list of views.
+         * @param view view
+         */
+        @ApiStatus.Internal
+        public static void addView(View view) {
+            if (view.player == null) return;
+            if (!playerViews.containsKey(view.player.getUniqueId())) playerViews.put(view.player.getUniqueId(), ConcurrentHashMap.newKeySet());
+            playerViews.get(view.player.getUniqueId()).add(view);
+        }
+
+        /**
+         * Delete all player views.
+         * @param uuid uuid of player
+         */
+        @ApiStatus.Internal
+        public static void deletePlayer(UUID uuid) {
+            if (!playerViews.containsKey(uuid)) return;
+            playerViews.get(uuid).forEach(View::delete);
+            playerViews.remove(uuid);
+        }
+
+        /**
+         * Delete view.
+         * @param view view
+         */
+        @ApiStatus.Internal
+        public static void deleteView(View view) {
+            if (view.player == null) return;
+            if (!playerViews.containsKey(view.player.getUniqueId())) return;
+            playerViews.get(view.player.getUniqueId()).remove(view);
+            view.delete();
+        }
+    }
 
     /**
      * Group of slots with a context.
@@ -115,6 +159,8 @@ public class View implements InventoryHolder {
     private final Set<subSlotCoordinate> pendingRemovalSlots = new HashSet<>();
     private record subSlotCoordinate(String context, int value, int slot) {}
 
+    private final AbstractInventory InventoryRef;
+
     /**
      * Create new view
      *
@@ -129,7 +175,8 @@ public class View implements InventoryHolder {
      * @param whitelist whitelisted players
      * @param player player associated with this view (the view will be built using this player)
      */
-    public View(
+    public <T extends AbstractInventory> View(
+        @Nullable T InventoryRef,
         @NotNull AbstractInventory.SIZE size,
         @NotNull InventoryContent content,
         @Nullable ItemClick onClick,
@@ -141,6 +188,7 @@ public class View implements InventoryHolder {
         Set<UUID> whitelist,
         @Nullable HumanEntity player
     ) {
+        this.InventoryRef = InventoryRef;
         this.content = content;
         this.onClick = onClick;
         this.requirement = requirement;
@@ -156,7 +204,28 @@ public class View implements InventoryHolder {
         // try initializing listener
         InventoryListener.registerListener();
 
+        // add to global list of views for later deletion.
+        // views may be kept until player logs off.
+        View.Storage.addView(this);
+
         reload();
+    }
+
+    /**
+     * Delete this view. Closes all viewers' GUIs, and removes view from the inventory linked to this.
+     */
+    public void delete() {
+        if (this.InventoryRef != null) {
+            if (this.InventoryRef instanceof io.github.viimeinen1.ainventory.Inventory.Inventory inv) {
+                inv.views.remove(player.getUniqueId());
+            } else if (this.InventoryRef instanceof SharedInventory inv) {
+                inv.view = null;
+            }
+        }
+        Storage.playerViews.get(player.getUniqueId()).remove(this);
+
+        this.inventory.getViewers().forEach(HumanEntity::closeInventory);
+        this.viewers.clear();
     }
 
     /**
@@ -319,7 +388,7 @@ public class View implements InventoryHolder {
      */
     private void removePendingRemovalSlots() {
         for (var coord : pendingRemovalSlots) {
-            removeSlot(coord.context, coord.slot, coord.value);
+            removeSlot(coord.context, coord.value, coord.slot);
         }
     }
 
@@ -389,63 +458,72 @@ public class View implements InventoryHolder {
      * @param slots slots to write to
      */
     public void write(Inventory inventory, boolean update, int... slots) {
-
-        // run on next tick to avoid conflict with actions (?)
-//        var plugin = JavaPlugin.getProvidingPlugin(this.getClass());
-//        Bukkit.getScheduler().runTask(plugin, () -> {
-            removePendingRemovalSlots();
-            for (int slotNum : slots) {
-                var dynamic = this.globalGroup.dynamicContextMap.get(slotNum);
-                if (dynamic != null) runDynamicBuilder(ContentBuilder.CONTEXT.GLOBAL, 0, slotNum);
-
-                var slot = this.globalGroup.slots.get(slotNum);
-                if (slot != null) slot.write(inventory, slotNum, 0);
-
-                for (var group : this.slotGroups.values()) {
-                    dynamic = group.dynamicContextMap.get(slotNum);
-                    if (dynamic != null) runDynamicBuilder(group.context, group.value, slotNum);
-                    slot = group.slots.get(slotNum);
-                    if (slot != null) slot.write(inventory, slotNum, group.value);
-                }
+        removePendingRemovalSlots();
+        for (int slotNum : slots) {
+            runDynamicBuilder(this.globalGroup, slotNum);
+            writeToSlot(inventory, this.globalGroup, slotNum);
+            for (var group : this.slotGroups.values()) {
+                runDynamicBuilder(group, slotNum);
+                writeToSlot(inventory, group, slotNum);
             }
-            if (update) update();
-//        });
+        }
+        if (update) update();
     }
 
     /**
-     * Run dynamic builder in this context & value.<br>
+     * Write to single slot in a slotGroup.
+     * @param inv inventory to write to
+     * @param group group
+     * @param slotNum slot
+     */
+    private void writeToSlot(Inventory inv, SlotGroup group, int slotNum) {
+        if (group == null) return;
+        var slot = group.slots.get(slotNum);
+        if (slot == null) return;
+        slot.write(inv, group.value, slotNum);
+    }
+
+    /**
+     * Run dynamic builder.<br>
      * Only 1 slot at a time, since we don't track duplicate slot builders.
-     * @param context context
-     * @param value value
+     * @param group context
      * @param slot slot
      */
-    private void runDynamicBuilder(String context, int value, int slot) {
-        for (var group : this.slotGroups.values()) {
-            if (!group.context.equals(context)) continue;
-            var valueMap = group.dynamicContextMap.get(slot);
-            if (valueMap == null) continue;
-            if (!valueMap.containsKey(value)) continue;
-            valueMap.get(value).run(new Slot.SubSlot.DynamicBuilder(
-                this,
-                context,
-                value,
-                slot
-            ));
-        }
+    private void runDynamicBuilder(SlotGroup group, int slot) {
+        if (group == null) return;
+        var valueMap = group.dynamicContextMap.get(slot);
+        if (valueMap == null) return;
+        if (!valueMap.containsKey(group.value)) return;
+        valueMap.get(group.value).run(new Slot.SubSlot.DynamicBuilder(
+            this,
+            group.context,
+            group.value,
+            slot
+        ));
     }
 
     /**
-     * Update view to it's viewers
+     * Update view to its viewers on next tick.<br>
+     * <br>
+     * Done on next tick to avoid sudden jumps in gui. Generally updating on next tick is enough. If you want to update on the same tick, use {@link View#updateNow()}
      */
     public void update() {
-        // test updating on next tick
-        var plugin = JavaPlugin.getProvidingPlugin(this.getClass());
-        Bukkit.getScheduler().runTask(plugin, () -> {
-            this.inventory.getViewers().forEach(viewer -> {
-                if (viewer instanceof Player pl) {
-                    pl.updateInventory();
-                }
-            });
+        var plugin = JavaPlugin.getProvidingPlugin(this.getClass()); // use whatever plugin loaded this class
+
+        // update on next tick to avoid sudden changes in inventory
+        Bukkit.getScheduler().runTask(plugin, this::updateNow);
+    }
+
+    /**
+     * Update view to its viewers now.<br>
+     * <br>
+     * Can cause sudden jumps in gui. Prefer {@link View#update()}.
+     */
+    public void updateNow() {
+        this.inventory.getViewers().forEach(viewer -> {
+            if (viewer instanceof Player pl) {
+                pl.updateInventory();
+            }
         });
     }
 
@@ -816,7 +894,7 @@ public class View implements InventoryHolder {
                 }
 
                 // wrong kind of item
-                if (slot.requirement != null && slot.requirement.prevent(item)) event.setCancelled(true);
+                if (slot.requirement != null && !slot.requirement.isAllowed(item)) event.setCancelled(true);
 
                 // no placing
                 else if (slot.preventPlace) event.setCancelled(true);
@@ -850,7 +928,7 @@ public class View implements InventoryHolder {
             // swapping (both place and pick up)
             case SWAP_WITH_CURSOR -> {
 
-                if (slot.requirement != null && slot.requirement.prevent(event.getCursor())) event.setCancelled(true);
+                if (slot.requirement != null && !slot.requirement.isAllowed(event.getCursor())) event.setCancelled(true);
                 else if (slot.preventPlace) event.setCancelled(true);
                 else if (slot.preventTake && slot.storage != null) event.setCancelled(true);
 
@@ -878,7 +956,7 @@ public class View implements InventoryHolder {
                     var replacement = event.getHotbarButton() == -1
                         ? event.getWhoClicked().getInventory().getItemInOffHand()
                         : event.getWhoClicked().getInventory().getItem(event.getHotbarButton());
-                    if (replacement != null && !replacement.isEmpty() && slot.requirement.prevent(replacement)) {
+                    if (replacement != null && !replacement.isEmpty() && !slot.requirement.isAllowed(replacement)) {
                         event.setCancelled(true);
                         return;
                     }
@@ -1200,7 +1278,7 @@ public class View implements InventoryHolder {
 
             if (slot == null) return fits;
 
-            if (slot.requirement != null && slot.requirement.prevent(transferStack)) return false;
+            if (slot.requirement != null && !slot.requirement.isAllowed(transferStack)) return false;
             if (slot.preventPlace || slot.preventModification) return false;
 
             // placeholder, goes on top
@@ -1265,7 +1343,7 @@ public class View implements InventoryHolder {
             if (event.getView().getTopInventory().equals(slotInv)) {
                 var subSlot = getCurrent(event.getView().convertSlot(slot));
                 if (subSlot != null) {
-                    if (subSlot.requirement != null && subSlot.requirement.prevent(event.getOldCursor())) continue;
+                    if (subSlot.requirement != null && !subSlot.requirement.isAllowed(event.getOldCursor())) continue;
                     if (subSlot.preventPlace || subSlot.preventModification) continue;
                     // all slots after here should get added to
                     if (subSlot.action != null) {
@@ -1341,6 +1419,28 @@ public class View implements InventoryHolder {
              * so items in this context will always be displayed.
              */
             public static final String GLOBAL = "global";
+
+            /**
+             * Helper method for mapping int into layer.<br>
+             * <br>
+             * <code>CONTEXT.LAYER(1) = "layer1"</code>
+             * @param num int
+             * @return context
+             */
+            public static String LAYER(int num) {
+                return "layer" + num;
+            }
+
+            /**
+             * Helper method for mapping int into list.<br>
+             * <br>
+             * <code>CONTEXT.LIST(1) = "list1"</code>
+             * @param num int
+             * @return context
+             */
+            public static String LIST(int num) {
+                return "list" + num;
+            }
         }
 
         /**

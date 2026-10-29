@@ -2,11 +2,13 @@ package io.github.viimeinen1.ainventory.Inventory;
 
 import io.github.viimeinen1.ainventory.View.View;
 import org.bukkit.entity.HumanEntity;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class SharedInventory extends AbstractInventory {
-    private View view;
+    @ApiStatus.Internal
+    public View view;
 
     /**
      * Create new shared inventory
@@ -53,6 +55,7 @@ public class SharedInventory extends AbstractInventory {
     public @NotNull View getView(@Nullable HumanEntity player) {
         if (view == null) {
             this.view = new View(
+                this,
                 this.inventoryBuilder.size,
                 this.inventoryBuilder.content,
                 this.inventoryBuilder.onClick,
@@ -66,5 +69,14 @@ public class SharedInventory extends AbstractInventory {
             );
         }
         return view;
+    }
+
+    /**
+     * Manually delete the shared view. All viewers' gui will be closed, and new view will be reconstructed on next use.
+     * @param player player
+     */
+    @Override
+    public void deleteView(@Nullable HumanEntity player) {
+        view.delete();
     }
 }

@@ -60,6 +60,12 @@ public abstract class AbstractInventory {
     public abstract @NotNull View getView(@Nullable HumanEntity player);
 
     /**
+     * Manually remove view. Will close all viewers' gui. New view will be reconstructed on next use of this inventory.
+     * @param player player
+     */
+    public abstract void deleteView(@Nullable HumanEntity player);
+
+    /**
      * Reload this inventory.
      * Will delete all contents in the inventory that is player placed,
      * and re-run all builder functions.
@@ -231,7 +237,9 @@ public abstract class AbstractInventory {
 
         /**
          * Build inventory where all players have their own unique view of the inventory.
-         * Changes in one player's inventory will not affect other player's views.
+         * Changes in one player's inventory will not affect other player's views.<br>
+         * <br>
+         * View will get removed after player logs out, so if someone else is viewing inventory built for the player, the inventory will close.
          *
          * @return new Inventory
          */

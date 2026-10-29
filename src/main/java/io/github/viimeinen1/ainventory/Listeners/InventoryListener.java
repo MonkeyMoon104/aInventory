@@ -1,6 +1,7 @@
 package io.github.viimeinen1.ainventory.Listeners;
 
 import io.github.viimeinen1.ainventory.View.View;
+import org.bukkit.Bukkit;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
@@ -8,6 +9,7 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryOpenEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -64,6 +66,12 @@ public class InventoryListener implements Listener {
         Inventory inv = event.getView().getTopInventory();
         if (!(inv.getHolder(false) instanceof View view)) {return;}
         view.onDrag(event);
+    }
+
+    @EventHandler
+    public static void onPlayerLeave(PlayerQuitEvent event) {
+        // delete async to avoid any lag caused by dubious amounts of views.
+        Bukkit.getScheduler().runTaskAsynchronously(JavaPlugin.getProvidingPlugin(InventoryListener.class), () -> View.Storage.deletePlayer(event.getPlayer().getUniqueId()));
     }
 
 }
