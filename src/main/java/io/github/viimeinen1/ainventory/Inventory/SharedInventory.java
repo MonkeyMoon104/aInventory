@@ -6,7 +6,18 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+/**
+ * Inventory that holds single view for all viewers.
+ * <b>ALL</b> changes in the inventory are reflected to all viewers instantly,
+ * including page changes, changes in content and placed items.<br>
+ * <br>
+ * As the underlying inventory is shared (exact same as having same chest open between 2 players),
+ * players will not be able to duplicate items by taking them out at the same time.
+ */
 public class SharedInventory extends AbstractInventory {
+    /**
+     * The view everyone shares. Changes in this will get reflected to all inventory viewers.
+     */
     @ApiStatus.Internal
     public View view;
 

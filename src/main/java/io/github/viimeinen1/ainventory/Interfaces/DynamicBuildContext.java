@@ -7,6 +7,10 @@ import io.github.viimeinen1.ainventory.Slot.Slot;
  */
 @FunctionalInterface
 public interface DynamicBuildContext {
+    /**
+     * Run dynamic slot builder
+     * @param builder dynamic slot builder
+     */
     void run(Slot.SubSlot.DynamicBuilder builder);
 }
 

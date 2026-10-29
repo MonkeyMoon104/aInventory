@@ -39,6 +39,11 @@ public class View implements InventoryHolder {
         private static final ConcurrentHashMap<UUID, Set<View>> playerViews = new ConcurrentHashMap<>();
 
         /**
+         * Stores all player views to handle deletion.
+         */
+        public Storage() {}
+
+        /**
          * Add view to global list of views.
          * @param view view
          */
@@ -164,6 +169,8 @@ public class View implements InventoryHolder {
     /**
      * Create new view
      *
+     * @param <T> extends AbstractInventory
+     * @param InventoryRef inventory that created this view
      * @param size size of the view
      * @param content content of the view
      * @param onClick click action
@@ -327,7 +334,7 @@ public class View implements InventoryHolder {
 
             var prev = group.slots.get(slot).slotMap.get(builder.contextValue);
             var n = new Slot.SubSlot(builder);
-            if (prev != null) n.storage =  prev.storage; // pass storage to new subSlot
+            if (prev != null) n.storage = prev.storage; // pass storage to new subSlot
             group.slots.get(slot).slotMap.put(builder.contextValue, n);
 
             if (!group.possibleValues.contains(builder.contextValue)) group.possibleValues.add(builder.contextValue);
@@ -348,7 +355,7 @@ public class View implements InventoryHolder {
 
             var prev = group.slots.get(slot).slotMap.get(builder.contextValue);
             var n = new Slot.SubSlot(builder);
-            if (prev != null) n.storage =  prev.storage; // pass storage to new subSlot
+            if (prev != null) n.storage = prev.storage; // pass storage to new subSlot
             group.slots.get(slot).slotMap.put(builder.contextValue, n);
 
             if (!group.possibleValues.contains(builder.contextValue)) group.possibleValues.add(builder.contextValue);
@@ -577,7 +584,9 @@ public class View implements InventoryHolder {
     /**
      * Set item to storage like player would have placed it.
      * Will display on top of specified item in the slot, and can be returned with returnOnClose().
-     * The item will only be returned to the player with same uuid.
+     * The item will only be returned to the player with same uuid.<br>
+     * <br>
+     * Will fail if there is no subSlot in this slot.
      *
      * @param slot slot to place item to
      * @param item item to place
@@ -591,14 +600,16 @@ public class View implements InventoryHolder {
     }
 
     /**
-     * Remove itemStack in storage from slot.
-     *
+     * Remove itemStack in storage from slot. Slot will get cleared instantly, and be written over.
      * @param slot slot
+     * @return Cleared ItemStack
      */
-    public void removeStorage(int slot) {
+    public @Nullable ItemStack removeStorage(int slot) {
         var subSlot = getCurrent(slot);
-        if (subSlot == null) return;
-        subSlot.storage = null;
+        if (subSlot != null) subSlot.storage = null;
+        var item = this.inventory.getItem(slot);
+        this.write(false, slot); // write over the slot
+        return item;
     }
 
     /**
@@ -607,7 +618,7 @@ public class View implements InventoryHolder {
      * @param event click event
      * @return true if nothing is left in the slot after the click
      */
-    private boolean takesAll(InventoryClickEvent event) {
+    private boolean takesAll(@NotNull InventoryClickEvent event) {
         var item = event.getCurrentItem();
         if (item == null || item.isEmpty()) return true;
         return switch (event.getAction()) {
@@ -800,12 +811,9 @@ public class View implements InventoryHolder {
             if (!slot.returnOnClose) continue;
             if (slot.storage != null && !slot.storage.equals(event.getPlayer().getUniqueId())) continue;
 
-            var itemInSlot = event.getInventory().getItem(i);
-            if (itemInSlot == null) continue;
-
-            slot.storage = null;
-            this.inventory.clear(i);
-            event.getPlayer().getInventory().addItem(itemInSlot)
+            var item = removeStorage(i);
+            if (item == null) continue;
+            event.getPlayer().getInventory().addItem(item)
                 .values().forEach(leftover -> event.getPlayer().dropItem(leftover));
         }
 
@@ -840,7 +848,10 @@ public class View implements InventoryHolder {
         }
 
         // animation
-        if (currentAnimation != null && !currentAnimation.allowClickPassthrough) event.setCancelled(true);
+        if (currentAnimation != null && !currentAnimation.allowClickPassthrough) {
+            event.setCancelled(true);
+            return;
+        }
 
         // whitelist
         if (whitelisted && !whitelist.contains(event.getWhoClicked().getUniqueId())) {
@@ -880,7 +891,7 @@ public class View implements InventoryHolder {
                 if (slot.action != null) slot.action.run(event);
             }
 
-            // placing
+            // placing to empty slot
             case PLACE_ALL, PLACE_ONE, PLACE_SOME, PLACE_FROM_BUNDLE -> {
                 var item = event.getCursor();
 
@@ -918,34 +929,33 @@ public class View implements InventoryHolder {
                 // no prevents
                 else {
                     if (slot.preventModification) event.setCancelled(true);
+                    // if there's no player placed items in the slot, and the item is only placeholder; block
+                    if (slot.storage == null && slot.placeholder) event.setCancelled(true);
                     if (slot.action != null) slot.action.run(event);
 
                     // if we took everything, storage has to be false
-                    if (!event.isCancelled() && takesAll(event)) slot.storage = null;
+                    if (!event.isCancelled() && takesAll(event)) removeStorage(event.getSlot());
                 }
             }
 
             // swapping (both place and pick up)
             case SWAP_WITH_CURSOR -> {
-
                 if (slot.requirement != null && !slot.requirement.isAllowed(event.getCursor())) event.setCancelled(true);
                 else if (slot.preventPlace) event.setCancelled(true);
                 else if (slot.preventTake && slot.storage != null) event.setCancelled(true);
-
-                    // phantom take; remove from cursor on next tick (if the event goes through)
-                else if (slot.preventTake) {
+                else {
                     if (slot.preventModification) event.setCancelled(true);
                     if (slot.action != null) slot.action.run(event);
 
                     if (!event.isCancelled()) {
-                        slot.storage = event.getWhoClicked().getUniqueId();
-                        Bukkit.getScheduler().runTask(JavaPlugin.getProvidingPlugin(View.class), () -> event.getWhoClicked().setItemOnCursor(ItemStack.empty()));
-                    }
-                } else {
-                    if (slot.preventModification) event.setCancelled(true);
-                    if (slot.action != null) slot.action.run(event);
+                        // phantom take; remove from cursor on next tick (if the event goes through)
+                        // do same if slot is placeholder and there's no player placed items in the slot
+                        if (slot.preventTake || (slot.storage == null && slot.placeholder)) {
+                            Bukkit.getScheduler().runTask(JavaPlugin.getProvidingPlugin(View.class), () -> event.getWhoClicked().setItemOnCursor(ItemStack.empty()));
+                        }
 
-                    if (!event.isCancelled()) slot.storage = event.getWhoClicked().getUniqueId();
+                        slot.storage = event.getWhoClicked().getUniqueId();
+                    }
                 }
 
             }
@@ -964,23 +974,20 @@ public class View implements InventoryHolder {
 
                 if (slot.preventPlace) event.setCancelled(true);
                 else if (slot.preventTake && slot.storage != null) event.setCancelled(true);
-
-                // phantom remove; remove from slot on next tick (if the event goes through)
-                else if (slot.preventTake) {
+                else {
                     if (slot.preventModification) event.setCancelled(true);
                     if (slot.action != null) slot.action.run(event);
-
                     if (!event.isCancelled()) {
+                        // phantom remove; remove from slot on next tick (if the event goes through)
+                        // do same if slot is placeholder and there's no player placed items in the slot
+                        if (slot.preventTake || (slot.storage == null && slot.placeholder)) {
+                            Bukkit.getScheduler().runTask(JavaPlugin.getProvidingPlugin(View.class), () -> {
+                                if (event.getHotbarButton() == -1) event.getWhoClicked().getInventory().setItemInOffHand(ItemStack.empty());
+                                else event.getWhoClicked().getInventory().setItem(event.getHotbarButton(), ItemStack.empty());
+                            });
+                        }
                         slot.storage = event.getWhoClicked().getUniqueId();
-                        Bukkit.getScheduler().runTask(JavaPlugin.getProvidingPlugin(View.class), () -> {
-                            if (event.getHotbarButton() == -1) event.getWhoClicked().getInventory().setItemInOffHand(ItemStack.empty());
-                            else event.getWhoClicked().getInventory().setItem(event.getHotbarButton(), ItemStack.empty());
-                        });
                     }
-                } else {
-                    if (slot.preventModification) event.setCancelled(true);
-                    if (slot.action != null) slot.action.run(event);
-                    if (!event.isCancelled()) slot.storage = event.getWhoClicked().getUniqueId();
                 }
             }
 
@@ -998,7 +1005,7 @@ public class View implements InventoryHolder {
                     if (slot.action != null) slot.action.run(event);
 
                     // if we took everything, storage has to be false
-                    if (!event.isCancelled() && takesAll(event)) slot.storage = null;
+                    if (!event.isCancelled() && takesAll(event)) removeStorage(event.getSlot());
                 }
             }
 
@@ -1022,7 +1029,7 @@ public class View implements InventoryHolder {
                     if (slot.action != null) slot.action.run(event);
 
                     // if we took everything, storage has to be false
-                    if (!event.isCancelled() && takesAll(event)) slot.storage = null;
+                    if (!event.isCancelled() && takesAll(event)) removeStorage(event.getSlot());
                 }
             }
 
@@ -1147,8 +1154,7 @@ public class View implements InventoryHolder {
 
                 // plugin inventory
                 else {
-                    if (slot != null && amount == 0) slot.storage = null;
-                    if (amount == 0) this.inventory.clear(i);
+                    if (amount == 0) removeStorage(i);
                     else this.inventory.setItem(i, itemList.get(i).asQuantity(amount));
                 }
             }
@@ -1198,8 +1204,7 @@ public class View implements InventoryHolder {
 
                     // plugin inventory
                     else {
-                        if (slot != null && amount == 0) slot.storage = null;
-                        if (amount == 0) this.inventory.clear(i);
+                        if (amount == 0) removeStorage(i);
                         else this.inventory.setItem(i, itemList.get(i).asQuantity(amount));
                     }
                 }
@@ -1238,8 +1243,7 @@ public class View implements InventoryHolder {
         } else {
             event.getClickedInventory().clear(event.getSlot());
             if (pluginInventory) {
-                var slot = getCurrent(event.getSlot());
-                if (slot != null) slot.storage = null;
+                removeStorage(event.getSlot());
             }
         }
 
@@ -1280,9 +1284,7 @@ public class View implements InventoryHolder {
 
             if (slot.requirement != null && !slot.requirement.isAllowed(transferStack)) return false;
             if (slot.preventPlace || slot.preventModification) return false;
-
-            // placeholder, goes on top
-            if (slot.storage == null) return true;
+            if (slot.storage == null && slot.placeholder) return true; // same as empty slot
             return fits;
         }).map(Map.Entry::getKey).toList();
 
@@ -1406,7 +1408,15 @@ public class View implements InventoryHolder {
      */
     public record ContentBuilder(View view, String context, int contextValue, HumanEntity player) {
 
+        /**
+         * Helper class for setting inventory context.
+         */
         public static class CONTEXT {
+
+            /**
+             * Helper class for setting inventory context.
+             */
+            public CONTEXT() { }
 
             /**
              * Default context when creating new inventory.
@@ -1695,6 +1705,7 @@ public class View implements InventoryHolder {
 
         /**
          * Create dynamic slot(s). The method here will be run on all writes.
+         * @param context context
          * @param slots slots
          */
         public void dynamic(DynamicBuildContext context, int... slots) {

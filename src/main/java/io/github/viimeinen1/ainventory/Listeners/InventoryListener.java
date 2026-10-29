@@ -13,6 +13,9 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.plugin.java.JavaPlugin;
 
+/**
+ * Houses all listeners of this (plugin) library
+ */
 public class InventoryListener implements Listener {
 
     /**
@@ -21,6 +24,11 @@ public class InventoryListener implements Listener {
     public static boolean initialized = false;
 
     private static final InventoryListener instance = new InventoryListener();
+
+    /**
+     * Houses all listeners of this (plugin) library
+     */
+    public InventoryListener() {}
 
     /**
      * Register listener for aInventory.
@@ -35,11 +43,18 @@ public class InventoryListener implements Listener {
         initialized = true;
     }
 
+    /**
+     * Unregister this listener. Will render all existing inventories built with this instance of library useless.
+     */
     public static void unregisterListener() {
         if (!initialized) return;
         HandlerList.unregisterAll(instance);
     }
 
+    /**
+     * Inventory open event. Event will be passed to the respective view that triggers this event.
+     * @param event event
+     */
     @EventHandler
     public static void onInventoryOpen(InventoryOpenEvent event) {
         Inventory inv = event.getView().getTopInventory();
@@ -47,6 +62,10 @@ public class InventoryListener implements Listener {
         view.onOpen(event);
     }
 
+    /**
+     * Inventory close event. Event will be passed to the respective view that triggers this event.
+     * @param event event
+     */
     @EventHandler
     public static void onInventoryClose(InventoryCloseEvent event) {
         Inventory inv = event.getView().getTopInventory();
@@ -54,6 +73,10 @@ public class InventoryListener implements Listener {
         view.onClose(event);
     }
 
+    /**
+     * Inventory click event. Event will be passed to the respective view that triggers this event.
+     * @param event event
+     */
     @EventHandler
     public static void onInventoryClick(InventoryClickEvent event) {
         Inventory inv = event.getView().getTopInventory();
@@ -61,6 +84,10 @@ public class InventoryListener implements Listener {
         view.onClick(event);
     }
 
+    /**
+     * Inventory drag event. Event will be passed to the respective view that triggers this event.
+     * @param event event
+     */
     @EventHandler
     public static void onInventoryDrag(InventoryDragEvent event) {
         Inventory inv = event.getView().getTopInventory();
@@ -68,6 +95,10 @@ public class InventoryListener implements Listener {
         view.onDrag(event);
     }
 
+    /**
+     * Player quit event. Handles deleting views of players that have left.
+     * @param event event
+     */
     @EventHandler
     public static void onPlayerLeave(PlayerQuitEvent event) {
         // delete async to avoid any lag caused by dubious amounts of views.

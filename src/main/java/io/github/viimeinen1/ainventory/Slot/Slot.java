@@ -15,6 +15,7 @@ import org.bukkit.Material;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 
@@ -27,6 +28,11 @@ public class Slot {
      * List of SubSlots in this slot
      */
     public final Map<Integer, SubSlot> slotMap = new HashMap<>();
+
+    /**
+     * Single slot in a view, including all SubSlots (slots with different context value).
+     */
+    public Slot() {}
 
     /**
      * Write an item to a slot in an inventory.
@@ -92,10 +98,14 @@ public class Slot {
         public final boolean preventTake;
 
         /**
+         * If this slot's item only acts as a placeholder which player can't take, but can place on top of.
+         */
+        public final boolean placeholder;
+
+        /**
          * Should this slot be cleared on next write
          */
         public final boolean clearOnWrite;
-
 
         /**
          * Create a new SubSlot
@@ -110,9 +120,14 @@ public class Slot {
             this.returnOnClose = builder.returnOnClose;
             this.preventPlace = builder.preventPlace;
             this.preventTake = builder.preventTake;
+            this.placeholder = builder.placeholder;
             this.clearOnWrite = false;
         }
 
+        /**
+         * Create new SubSlot from dynamic builder.
+         * @param dynamicBuilder dynamic SubSlot builder
+         */
         public SubSlot(DynamicBuilder dynamicBuilder) {
             this.item = dynamicBuilder.item;
             this.action = dynamicBuilder.action;
@@ -121,6 +136,7 @@ public class Slot {
             this.returnOnClose = dynamicBuilder.returnOnClose;
             this.preventPlace = dynamicBuilder.preventPlace;
             this.preventTake = dynamicBuilder.preventTake;
+            this.placeholder = dynamicBuilder.placeholder;
             this.clearOnWrite = dynamicBuilder.clearOnWrite;
         }
 
@@ -148,9 +164,13 @@ public class Slot {
         }
 
         /**
-         * SubSlot builder
+         * Abstract SlotBuilder
+         * @param <T> extending builder
          */
         public static abstract class AbstractBuilder <T extends AbstractBuilder<T>> {
+            /**
+             * View this slot will get added to
+             */
             protected final View view;
 
             /**
@@ -167,14 +187,27 @@ public class Slot {
              * Slots this builder will be applied to.
              */
             public final int[] slots;
+            /** Item that will be added to the inventory */
             protected ItemStack item = ItemStack.empty();
-            protected ItemClick action = null; // click action
-            protected ItemRequirement requirement = null; // requirement
-            protected boolean preventModification = false; // should modification be prevented (button)
-            protected boolean returnOnClose = false; // should the stored item be returned to player on inventory close
-            protected boolean preventPlace = false; // should placing items to slot be prevented
-            protected boolean preventTake = false; // should taking items from slot be prevented
+            /** Click action */
+            protected ItemClick action = null;
+            /** requirement */
+            protected ItemRequirement requirement = null;
+            /** should the modification of this slot be prevented */
+            protected boolean preventModification = false;
+            /** should item stored in this slot be returned to the player when inventory is closed */
+            protected boolean returnOnClose = false;
+            /** should placing items to this slot be prevented */
+            protected boolean preventPlace = false;
+            /** should taking items from this slot be prevented */
+            protected boolean preventTake = false;
+            /** should this slot be placeholder item, which gets displaced by items players place on top */
+            protected boolean placeholder = false;
 
+            /**
+             * This builder
+             * @return this
+             */
             protected abstract T self();
 
             /**
@@ -379,8 +412,7 @@ public class Slot {
              * @return this builder
              */
             public T preventModification() {
-                this.preventModification = true;
-                return self();
+                return preventModification(true);
             }
 
             /**
@@ -402,8 +434,7 @@ public class Slot {
              * @return this builder
              */
             public T returnOnClose() {
-                this.returnOnClose = true;
-                return self();
+                return returnOnClose(true);
             }
 
             /**
@@ -427,8 +458,7 @@ public class Slot {
              * @return builder
              */
             public T preventPlace() {
-                this.preventPlace = true;
-                return self();
+                return preventPlace(true);
             }
 
             /**
@@ -454,8 +484,7 @@ public class Slot {
              * @return builder
              */
             public T preventTake() {
-                this.preventTake = true;
-                return self();
+                return preventTake(true);
             }
 
             /**
@@ -473,6 +502,24 @@ public class Slot {
             }
 
             /**
+             * If players are able to place items in this slot, but not get the item in this slot other than storage items.
+             * @return builder
+             */
+            public T placeholder() {
+                return placeholder(true);
+            }
+
+            /**
+             * If players are able to place items in this slot, but not get the item in this slot other than storage items. The item set into this slot acts as a placeholder the player can't get.
+             * @param placeholder true if this slot is placeholder slot
+             * @return builder
+             */
+            public T placeholder(boolean placeholder) {
+                this.placeholder = placeholder;
+                return self();
+            }
+
+            /**
              * Apply the slot to view.
              * <br><br>
              * If this is not called, this slot will not get added.
@@ -481,6 +528,9 @@ public class Slot {
 
         }
 
+        /**
+         * SubSlot builder
+         */
         public static class Builder extends AbstractBuilder<Builder> {
 
             @Override
@@ -500,6 +550,9 @@ public class Slot {
                 super(view, context, contextValue, slots);
             }
 
+            /**
+             * Build slot
+             */
             @Override
             public void build() {
                 this.view.applySlots(this);
@@ -517,6 +570,7 @@ public class Slot {
              * Value associated with this slot.
              */
             public final T value;
+            /** index associated with this slot */
             public final int index;
 
             /**
@@ -526,6 +580,7 @@ public class Slot {
              * @param value value this builder is associated with
              * @param context context this builder will be applied to
              * @param contextValue context value this builder will be applied to
+             * @param index index of the value this builder is associated with
              * @param slots slots this builder will be applied to
              */
             public ValuedBuilder(View view, T value, String context, int contextValue, int index, int... slots) {
@@ -535,6 +590,9 @@ public class Slot {
             }
         }
 
+        /**
+         * Dynamic slot builder. Has additional data for slots specific for dynamic slots.
+         */
         public static class DynamicBuilder extends AbstractBuilder<DynamicBuilder> {
 
             @Override
