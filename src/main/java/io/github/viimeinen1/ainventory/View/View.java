@@ -933,8 +933,7 @@ public class View implements InventoryHolder {
                     if (slot.storage == null && slot.placeholder) event.setCancelled(true);
                     if (slot.action != null) slot.action.run(event);
 
-                    // if we took everything, storage has to be false
-                    if (!event.isCancelled() && takesAll(event)) removeStorage(event.getSlot());
+                    if (!event.isCancelled() && takesAll(event)) slot.storage = null;
                 }
             }
 
@@ -1004,8 +1003,7 @@ public class View implements InventoryHolder {
                     if (slot.preventModification) event.setCancelled(true);
                     if (slot.action != null) slot.action.run(event);
 
-                    // if we took everything, storage has to be false
-                    if (!event.isCancelled() && takesAll(event)) removeStorage(event.getSlot());
+                    if (!event.isCancelled() && takesAll(event)) slot.storage = null;
                 }
             }
 
@@ -1028,8 +1026,7 @@ public class View implements InventoryHolder {
                     if (slot.preventModification) event.setCancelled(true);
                     if (slot.action != null) slot.action.run(event);
 
-                    // if we took everything, storage has to be false
-                    if (!event.isCancelled() && takesAll(event)) removeStorage(event.getSlot());
+                    if (!event.isCancelled() && takesAll(event)) slot.storage = null;
                 }
             }
 
